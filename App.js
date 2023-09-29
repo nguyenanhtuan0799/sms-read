@@ -16,7 +16,9 @@ import {
 } from 'react-native';
 import SmsAndroid from 'react-native-get-sms-android';
 import axios from 'axios';
-import BackgroundFetch from 'react-native-background-fetch';
+// import VIForegroundService from '@voximplant/react-native-foreground-service';
+import BackgroundService from 'react-native-background-actions';
+import smsListener from 'react-native-android-sms-listener-background';
 
 const App = () => {
   const [state, setState] = useState({
@@ -30,6 +32,7 @@ const App = () => {
     isStart: false,
     count: 0,
   });
+  const [smsLister, setSmsLister] = useState();
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -37,68 +40,95 @@ const App = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (state.isStart && state.isPermission) {
-      initBackgroundFetch();
-      BackgroundFetch.scheduleTask({
-        taskId: 'com.app.sendSMS',
-        forceAlarmManager: true,
-        periodic: true,
-        delay: 100, // <-- milliseconds
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.isPermission, state.isStart]);
-
   useEffect(() => {
     if (state.isStart) {
-      BackgroundFetch.start();
-      console.log('start');
+      // startForegroundService();
+      startBackgroundService();
     } else {
-      BackgroundFetch.stop();
-      console.log('stop');
+      // stopForegroundService();
+      stopBackgroundService();
+      if (smsLister) {
+        smsLister.remove();
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isStart]);
 
-  const initBackgroundFetch = async () => {
-    let countBackgroundRef = {current: state.count};
+  useEffect(() => {
+    // initChanel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  async function getPermission() {
+    await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_SMS, {
+      title: 'Ola',
+      message: 'Permissão para ver seu sms rss.',
+    });
 
-    const status = await BackgroundFetch.configure(
+    await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
       {
-        minimumFetchInterval: 15, // <-- minutes (15 is minimum allowed)
-        stopOnTerminate: false,
-        enableHeadless: true,
-        startOnBoot: true,
-        // Android options
-        forceAlarmManager: false, // <-- Set true to bypass JobScheduler.
-        requiredNetworkType: BackgroundFetch.NETWORK_TYPE_NONE, // Default
-        requiresCharging: false, // Default
-        requiresDeviceIdle: false, // Default
-        requiresBatteryNotLow: false, // Default
-        requiresStorageNotLow: false, // Default
-      },
-      async taskId => {
-        console.log('[BackgroundFetch] taskId', taskId);
-        // Create an Event record.
-        switch (taskId) {
-          case 'com.app.sendSMS':
-            listSMS(countBackgroundRef);
-            console.log('runing background');
-            break;
-          default:
-            console.log('Default fetch task');
-        }
-        // Finish.
-        BackgroundFetch.finish(taskId);
-      },
-      async taskId => {
-        // Oh No!  Our task took too long to complete and the OS has signalled
-        // that this task must be finished immediately.
-        console.log('[Fetch] TIMEOUT taskId:', taskId);
-        BackgroundFetch.finish(taskId);
+        title: 'Receive SMS',
+        message: 'Need access to receive sms, to verify OTP',
       },
     );
+  }
+  async function listenSms(callback) {
+    const resp = await getPermission();
+    const lister = smsListener.addListener(message => {
+      // if (message?.originatingAddress === state.branch_name) {
+      console.log(message, 'nghe');
+      // sendSMS({
+      //   brand_name: message.originatingAddress,
+      //   content: message.body,
+      // });
+      // }
+    });
+    setSmsLister(lister);
+  }
+
+  const sleep = time =>
+    new Promise(resolve => setTimeout(() => resolve(), time));
+
+  const veryIntensiveTask = async taskDataArguments => {
+    let countBackgroundRef = {current: state.count};
+    // Example of an infinite loop task
+    const {delay} = taskDataArguments;
+    let number = 30;
+    await new Promise(async resolve => {
+      for (let i = 0; BackgroundService.isRunning(); i++) {
+        listenSms();
+        listSMS(countBackgroundRef);
+        console.log('chạy');
+        // if (i % number === 0) {
+        //   console.log(i);
+        //   console.log('api');
+        //   sendSMS({brand_name: 'BAHADI', content: 'Test Lock mobile'});
+        // }
+        await sleep(delay);
+      }
+    });
+  };
+
+  const options = {
+    taskName: 'Example',
+    taskTitle: 'SMS_BANK',
+    taskDesc: 'Đang ghi nhận',
+    taskIcon: {
+      name: 'ic_launcher',
+      type: 'mipmap',
+    },
+    color: '#ff00ff',
+    linkingURI: 'yourSchemeHere://chat/jane', // See Deep Linking for more info
+    parameters: {
+      delay: Number.parseInt(state.timeout),
+    },
+  };
+
+  const startBackgroundService = async () => {
+    await BackgroundService.start(veryIntensiveTask, options);
+  };
+  const stopBackgroundService = async () => {
+    await BackgroundService.stop();
   };
 
   const sendSMS = useCallback(
@@ -145,10 +175,11 @@ const App = () => {
           fail => {
             console.log('Failed with this error: ' + fail);
           },
-          (count, smsList) => {
+          async (count, smsList) => {
             var arr = JSON.parse(smsList)?.filter(
               _sms => _sms.address === state.branch_name,
             );
+
             setState(prevData => ({
               ...prevData,
               count: count,
@@ -200,10 +231,10 @@ const App = () => {
             parseSmsList[count - 1]?.address === state.branch_name &&
             count > countBackgroundRef.current
           ) {
-            sendSMS({
-              brand_name: parseSmsList[count - 1]?.address,
-              content: parseSmsList[count - 1]?.body,
-            });
+            // sendSMS({
+            //   brand_name: parseSmsList[count - 1]?.address,
+            //   content: parseSmsList[count - 1]?.body,
+            // });
             setState(prevData => {
               return {
                 ...prevData,
@@ -218,7 +249,7 @@ const App = () => {
         },
       );
     },
-    [sendSMS, state.branch_name],
+    [state.branch_name],
   );
 
   const onChangeSetting = ({name, value}) => {
@@ -236,7 +267,7 @@ const App = () => {
   };
 
   const onChangeStart = () => {
-    if (state.api && state.branch_name && state.timeout) {
+    if (state.api && state.branch_name && Number.parseInt(state.timeout)) {
       setState(prevData => ({
         ...prevData,
         isStart: !prevData.isStart,
@@ -304,7 +335,7 @@ const App = () => {
             value={state.timeout?.toString()}
             keyboardType="phone-pad"
             onChangeText={value =>
-              onChangeSetting({name: 'timeout', value: value})
+              onChangeSetting({name: 'timeout', value: Number.parseInt(value)})
             }
             placeholder="Nhập thời gian"
           />

@@ -24,10 +24,12 @@
     "aab": "cd android && ./gradlew clean && ./gradlew bundleRelease && cd .."
   },
   "dependencies": {
+    "@voximplant/react-native-foreground-service": "^3.0.2",
     "axios": "^1.2.0",
     "react": "18.1.0",
     "react-native": "0.70.6",
-    "react-native-android-sms-listener": "^0.8.0",
+    "react-native-android-sms-listener-background": "^0.0.1",
+    "react-native-background-actions": "^3.0.0",
     "react-native-background-fetch": "^4.2.1",
     "react-native-background-timer": "^2.4.1",
     "react-native-get-sms-android": "^2.1.0",
