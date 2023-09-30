@@ -13,7 +13,6 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Linking,
-  AppState,
 } from 'react-native';
 import SmsAndroid from 'react-native-get-sms-android';
 import axios from 'axios';
@@ -27,17 +26,16 @@ const milliseconds = m => m * 60 * 1000;
 const Home = () => {
   const [state, setState] = useState({
     smsList: [],
-    minDate: '',
-    maxDate: '',
     isPermission: false,
     branch_name: '',
-    api: 'https://banhang.bahadi.vn/app/appapi/sms_bank.json',
+    api: '',
     timeout: 1,
     isStart: false,
     count: 0,
   });
   const [isConnected, setIsConnected] = useState();
   const [smsDisconnect, setSmsDisconnect] = useState([]);
+  // const [password, setPassword] = useState('');
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -134,12 +132,16 @@ const Home = () => {
     // Example of an infinite loop task
     const {delay} = taskDataArguments;
     await new Promise(async resolve => {
+      // const number = 5;
       for (let i = 0; BackgroundService.isRunning(); i++) {
         listSMS(countBackgroundRef);
         // if (i % number === 0) {
         //   console.log(i);
-        //   console.log('api');
-        //   sendSMS({brand_name: 'BAHADI', content: 'Test Lock mobile'});
+        //   console.log('api test');
+        //   sendSMSTest({
+        //     brand_name: 'BAHADI',
+        //     content: 'Test Loop API',
+        //   });
         // }
         await sleep(delay);
       }
@@ -181,7 +183,6 @@ const Home = () => {
         })
         .catch(function (error) {
           // handle error
-          Alert.alert(error);
         })
         .finally(function () {
           // always executed
@@ -189,6 +190,22 @@ const Home = () => {
     },
     [state.api],
   );
+  // const sendSMSTest = useCallback(({brand_name, content}) => {
+  //   axios
+  //     .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
+  //       brand_name: brand_name,
+  //       content: content,
+  //     })
+  //     .then(function (response) {
+  //       // console.log(response);
+  //     })
+  //     .catch(function (error) {
+  //       // handle error
+  //     })
+  //     .finally(function () {
+  //       // always executed
+  //     });
+  // }, []);
 
   const requestPermissions = async () => {
     let granted = {};
@@ -299,7 +316,12 @@ const Home = () => {
   };
 
   const onChangeStart = () => {
-    if (state.api && state.branch_name && Number.parseInt(state.timeout)) {
+    if (
+      state.api &&
+      state.branch_name &&
+      Number.parseInt(state.timeout)
+      // password
+    ) {
       setState(prevData => ({
         ...prevData,
         isStart: !prevData.isStart,
@@ -392,6 +414,15 @@ const Home = () => {
             placeholder="Nhập branch name"
           />
         </View>
+        {/* <View style={styles.inputContainer}>
+          <Text style={styles.label}>Password</Text>
+          <TextInput
+            style={styles.input}
+            value={password}
+            onChangeText={value => setPassword(value)}
+            placeholder="Nhập branch name"
+          />
+        </View> */}
         <TouchableOpacity style={styles.btnContainer} onPress={onChangeStart}>
           <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
             {state.isStart ? 'Dừng' : 'Bắt đầu'}
