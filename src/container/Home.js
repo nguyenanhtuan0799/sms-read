@@ -13,12 +13,16 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Linking,
+  AppState,
 } from 'react-native';
 import SmsAndroid from 'react-native-get-sms-android';
 import axios from 'axios';
 // import VIForegroundService from '@voximplant/react-native-foreground-service';
 import BackgroundService from 'react-native-background-actions';
-import smsListener from 'react-native-android-sms-listener-background';
+import smsListener from 'react-native-android-sms-listener-foreground';
+import NetInfo from '@react-native-community/netinfo';
+
+const milliseconds = m => m * 60 * 1000;
 
 const Home = () => {
   const [state, setState] = useState({
@@ -26,42 +30,87 @@ const Home = () => {
     minDate: '',
     maxDate: '',
     isPermission: false,
-    branch_name: 'BAHADI',
+    branch_name: '',
     api: 'https://banhang.bahadi.vn/app/appapi/sms_bank.json',
-    timeout: 10000,
+    timeout: 1,
     isStart: false,
     count: 0,
   });
-  const [smsLister, setSmsLister] = useState();
+  const [isConnected, setIsConnected] = useState();
+  const [smsDisconnect, setSmsDisconnect] = useState([]);
 
   useEffect(() => {
     if (Platform.OS === 'android') {
       requestPermissions();
+      NetInfo.fetch().then(state => {
+        setIsConnected(state.isConnected);
+      });
     }
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsConnected(state.isConnected);
+    });
+    return () => {
+      unsubscribe.remove();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (isConnected && smsDisconnect.length > 0) {
+      smsDisconnect.forEach(sms => {
+        sendSMS({
+          brand_name: sms.brand_name,
+          content: sms.content,
+        });
+      });
+      setSmsDisconnect([]);
+    }
+  }, [isConnected, sendSMS, smsDisconnect]);
+
   useEffect(() => {
     const deepLink = Linking.addEventListener('url', handleOpenURL);
+    const resp = getPermission();
+    const lister = smsListener.addListener(message => {
+      const branchArr = state.branch_name.split(',');
+      branchArr.forEach(branch => {
+        if (branch.trim() === message?.originatingAddress) {
+          NetInfo.fetch().then(state => {
+            if (state.isConnected) {
+              sendSMS({
+                brand_name: message.originatingAddress,
+                content: message.body,
+              });
+            } else {
+              setSmsDisconnect(prev => {
+                return [
+                  ...prev,
+                  {
+                    brand_name: message.originatingAddress,
+                    content: message.body,
+                  },
+                ];
+              });
+            }
+          });
+        }
+      });
+    });
     if (state.isStart) {
       // startForegroundService();
       startBackgroundService();
+      setSmsDisconnect([]);
     } else {
       // stopForegroundService();
       stopBackgroundService();
-      if (smsLister) {
-        smsLister.remove();
-      }
+      setSmsDisconnect([]);
     }
     return () => {
       deepLink.remove();
+      lister.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isStart]);
 
-  useEffect(() => {
-    // initChanel();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   async function getPermission() {
     await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_SMS, {
       title: 'SmsBanking',
@@ -76,33 +125,17 @@ const Home = () => {
       },
     );
   }
-  async function listenSms(callback) {
-    const resp = await getPermission();
-    const lister = smsListener.addListener(message => {
-      // if (message?.originatingAddress === state.branch_name) {
-      console.log(message, 'nghe');
-      // sendSMS({
-      //   brand_name: message.originatingAddress,
-      //   content: message.body,
-      // });
-      // }
-    });
-    setSmsLister(lister);
-  }
 
   const sleep = time =>
     new Promise(resolve => setTimeout(() => resolve(), time));
 
   const veryIntensiveTask = async taskDataArguments => {
-    let countBackgroundRef = {current: state.count};
+    const countBackgroundRef = {current: state.count};
     // Example of an infinite loop task
     const {delay} = taskDataArguments;
-    let number = 30;
     await new Promise(async resolve => {
       for (let i = 0; BackgroundService.isRunning(); i++) {
-        listenSms();
         listSMS(countBackgroundRef);
-        console.log('chạy');
         // if (i % number === 0) {
         //   console.log(i);
         //   console.log('api');
@@ -125,7 +158,7 @@ const Home = () => {
     color: '#ff00ff',
     linkingURI: 'smsBanking://Root', // See Deep Linking for more info
     parameters: {
-      delay: Number.parseInt(state.timeout),
+      delay: milliseconds(Number.parseInt(state.timeout)),
     },
   };
 
@@ -181,9 +214,7 @@ const Home = () => {
             console.log('Failed with this error: ' + fail);
           },
           async (count, smsList) => {
-            var arr = JSON.parse(smsList)?.filter(
-              _sms => _sms.address === state.branch_name,
-            );
+            const arr = JSON.parse(smsList);
 
             setState(prevData => ({
               ...prevData,
@@ -217,45 +248,35 @@ const Home = () => {
     }
   };
 
-  const listSMS = useCallback(
-    countBackgroundRef => {
-      var filter = {
-        box: 'inbox',
-        maxCount: 1000000000,
-      };
+  const listSMS = useCallback(countBackgroundRef => {
+    var filter = {
+      box: 'inbox',
+      maxCount: 1000000000,
+    };
 
-      SmsAndroid.list(
-        JSON.stringify(filter),
-        fail => {
-          console.log('Failed with this error: ' + fail);
-        },
-        (count, smsList) => {
-          const parseSmsList = JSON.parse(smsList).reverse();
-          console.log(count, '???', countBackgroundRef.current);
-          if (
-            parseSmsList[count - 1]?.address === state.branch_name &&
-            count > countBackgroundRef.current
-          ) {
-            // sendSMS({
-            //   brand_name: parseSmsList[count - 1]?.address,
-            //   content: parseSmsList[count - 1]?.body,
-            // });
-            setState(prevData => {
-              return {
-                ...prevData,
-                smsList: JSON.parse(smsList)?.filter(
-                  _sms => _sms.address === state.branch_name,
-                ),
-                count: count,
-              };
-            });
-            countBackgroundRef.current = count;
-          }
-        },
-      );
-    },
-    [state.branch_name],
-  );
+    SmsAndroid.list(
+      JSON.stringify(filter),
+      fail => {
+        console.log('Failed with this error: ' + fail);
+      },
+      (count, smsList) => {
+        const parseSmsList = JSON.parse(smsList);
+        console.log(count, '???count', countBackgroundRef.current);
+
+        if (count > countBackgroundRef.current) {
+          console.log(count, '???count');
+          setState(prevData => {
+            return {
+              ...prevData,
+              smsList: parseSmsList,
+              count: count,
+            };
+          });
+          countBackgroundRef.current = count;
+        }
+      },
+    );
+  }, []);
 
   function handleOpenURL(evt) {
     // Will be called when the notification is pressed
@@ -288,24 +309,13 @@ const Home = () => {
     }
   };
 
-  const renderShowSMS = useCallback(() => {
-    return state.smsList?.map(sms => {
-      return (
-        <View
-          style={{marginTop: 10, backgroundColor: '#fff', padding: 16}}
-          key={sms?._id}>
-          <Text style={{color: 'red', size: 16}}>From: {sms?.address}</Text>
-          <Text style={styles.text}>Body: {sms?.body}</Text>
-          <Text style={styles.text}>Id: {sms?._id}</Text>
-          <Text style={styles.text}>
-            Date (readable): {new Date(sms?.date).toString()}
-          </Text>
-        </View>
-      );
+  const renderLatestMessages = useCallback(() => {
+    const branchArr = state.branch_name.split(',');
+    const data = state.smsList?.filter(_sms => {
+      return branchArr.find(branch => {
+        return branch.trim() === _sms.address && _sms;
+      });
     });
-  }, [state.smsList]);
-
-  const renderLatestMessages = () => {
     return (
       <View style={{flex: 1, width: '100%'}}>
         <View
@@ -319,13 +329,30 @@ const Home = () => {
             DANH SÁCH TIN NHẮN
           </Text>
           <Text style={{fontWeight: 'bold', color: '#00000', fontSize: 16}}>
-            {state.count}
+            {data.length || state.count}
           </Text>
         </View>
-        <ScrollView>{renderShowSMS()}</ScrollView>
+        <ScrollView>
+          {data?.map(sms => {
+            return (
+              <View
+                style={{marginTop: 10, backgroundColor: '#fff', padding: 16}}
+                key={sms?._id}>
+                <Text style={{color: 'red', size: 16}}>
+                  From: {sms?.address}
+                </Text>
+                <Text style={styles.text}>Body: {sms?.body}</Text>
+                <Text style={styles.text}>Id: {sms?._id}</Text>
+                <Text style={styles.text}>
+                  Date (readable): {new Date(sms?.date).toString()}
+                </Text>
+              </View>
+            );
+          })}
+        </ScrollView>
       </View>
     );
-  };
+  }, [state.branch_name, state.count, state.smsList]);
 
   const renderSetting = () => {
     return (
@@ -340,13 +367,16 @@ const Home = () => {
           />
         </View>
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Thời gian gọi(ms)</Text>
+          <Text style={styles.label}>Thời gian gọi(Phút)</Text>
           <TextInput
             style={styles.input}
             value={state.timeout?.toString()}
             keyboardType="phone-pad"
             onChangeText={value =>
-              onChangeSetting({name: 'timeout', value: Number.parseInt(value)})
+              onChangeSetting({
+                name: 'timeout',
+                value: Number.parseInt(value),
+              })
             }
             placeholder="Nhập thời gian"
           />
