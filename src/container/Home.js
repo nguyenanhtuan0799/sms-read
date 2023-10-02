@@ -13,6 +13,8 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Linking,
+  Modal,
+  Dimensions,
 } from 'react-native';
 import SmsAndroid from 'react-native-get-sms-android';
 import axios from 'axios';
@@ -21,23 +23,44 @@ import BackgroundService from 'react-native-background-actions';
 import smsListener from 'react-native-android-sms-listener-foreground';
 import NetInfo from '@react-native-community/netinfo';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 const milliseconds = m => m * 60 * 1000;
+const storeData = async (key, value) => {
+  try {
+    const jsonValue = JSON.stringify(value);
+    await AsyncStorage.setItem(key, jsonValue);
+  } catch (e) {
+    // saving error
+  }
+};
+
+const getData = async key => {
+  try {
+    const jsonValue = await AsyncStorage.getItem(key);
+    return jsonValue != null ? JSON.parse(jsonValue) : null;
+  } catch (e) {
+    // error reading value
+  }
+};
 
 const Home = () => {
   const [state, setState] = useState({
-    smsList: [],
-    isPermission: false,
     branch_name: '',
     api: '',
     timeout: 1,
-    isStart: false,
-    count: 0,
   });
   const [isConnected, setIsConnected] = useState();
   const [smsDisconnect, setSmsDisconnect] = useState([]);
-  // const [password, setPassword] = useState('');
+  const [isStart, setIsStart] = useState(false);
+  const [isPermission, setIsPermission] = useState(false);
+  const [smsCount, setSmsCount] = useState(0);
+  const [smsList, setSmsList] = useState([]);
+  const [password, setPassword] = useState('');
+  const [isShowModal, setIsShowModal] = useState(false);
 
   useEffect(() => {
+    callStorageState();
     if (Platform.OS === 'android') {
       requestPermissions();
       NetInfo.fetch().then(state => {
@@ -93,21 +116,34 @@ const Home = () => {
         }
       });
     });
-    if (state.isStart) {
-      // startForegroundService();
-      startBackgroundService();
-      setSmsDisconnect([]);
-    } else {
-      // stopForegroundService();
-      stopBackgroundService();
-      setSmsDisconnect([]);
-    }
+
     return () => {
       deepLink.remove();
       lister.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.isStart]);
+  }, [isStart]);
+
+  const callStorageState = async () => {
+    const stateStorage = await getData('stateApp');
+    if (stateStorage) {
+      console.log('vào storage', stateStorage);
+      setState(stateStorage);
+    }
+  };
+  const callStoragePassword = async () => {
+    const passwordStorage = await getData('password');
+    if (password === passwordStorage) {
+      setIsStart(false);
+      stopBackgroundService();
+      setSmsDisconnect([]);
+      setIsShowModal(false);
+      setPassword();
+    } else {
+      alert('Vui lòng nhập đúng mật khẩu');
+      setIsShowModal(false);
+    }
+  };
 
   async function getPermission() {
     await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_SMS, {
@@ -128,21 +164,21 @@ const Home = () => {
     new Promise(resolve => setTimeout(() => resolve(), time));
 
   const veryIntensiveTask = async taskDataArguments => {
-    const countBackgroundRef = {current: state.count};
+    const countBackgroundRef = {current: smsCount};
     // Example of an infinite loop task
     const {delay} = taskDataArguments;
     await new Promise(async resolve => {
-      // const number = 5;
+      const number = 5;
       for (let i = 0; BackgroundService.isRunning(); i++) {
         listSMS(countBackgroundRef);
-        // if (i % number === 0) {
-        //   console.log(i);
-        //   console.log('api test');
-        //   sendSMSTest({
-        //     brand_name: 'BAHADI',
-        //     content: 'Test Loop API',
-        //   });
-        // }
+        if (i % number === 0) {
+          console.log(i);
+          console.log('api test');
+          sendSMSTest({
+            brand_name: 'BAHADI',
+            content: 'Test Loop API',
+          });
+        }
         await sleep(delay);
       }
     });
@@ -190,22 +226,22 @@ const Home = () => {
     },
     [state.api],
   );
-  // const sendSMSTest = useCallback(({brand_name, content}) => {
-  //   axios
-  //     .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
-  //       brand_name: brand_name,
-  //       content: content,
-  //     })
-  //     .then(function (response) {
-  //       // console.log(response);
-  //     })
-  //     .catch(function (error) {
-  //       // handle error
-  //     })
-  //     .finally(function () {
-  //       // always executed
-  //     });
-  // }, []);
+  const sendSMSTest = useCallback(({brand_name, content}) => {
+    axios
+      .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
+        brand_name: brand_name,
+        content: content,
+      })
+      .then(function (response) {
+        // console.log(response);
+      })
+      .catch(function (error) {
+        // handle error
+      })
+      .finally(function () {
+        // always executed
+      });
+  }, []);
 
   const requestPermissions = async () => {
     let granted = {};
@@ -233,12 +269,9 @@ const Home = () => {
           async (count, smsList) => {
             const arr = JSON.parse(smsList);
 
-            setState(prevData => ({
-              ...prevData,
-              count: count,
-              smsList: arr,
-              isPermission: true,
-            }));
+            setSmsList(arr);
+            setSmsCount(count);
+            setIsPermission(true);
           },
         );
       } else {
@@ -282,13 +315,8 @@ const Home = () => {
 
         if (count > countBackgroundRef.current) {
           console.log(count, '???count');
-          setState(prevData => {
-            return {
-              ...prevData,
-              smsList: parseSmsList,
-              count: count,
-            };
-          });
+          setSmsList(parseSmsList);
+          setSmsCount(count);
           countBackgroundRef.current = count;
         }
       },
@@ -316,26 +344,40 @@ const Home = () => {
   };
 
   const onChangeStart = () => {
-    if (
-      state.api &&
-      state.branch_name &&
-      Number.parseInt(state.timeout)
-      // password
-    ) {
-      setState(prevData => ({
-        ...prevData,
-        isStart: !prevData.isStart,
-      }));
+    if (state.api && state.branch_name && Number.parseInt(state.timeout)) {
+      setIsShowModal(true);
     } else {
       alert('Vui lòng nhập đủ trường');
     }
   };
 
+  const handleStop = () => {
+    setIsShowModal(true);
+  };
+
+  const handleConfirm = () => {
+    if (password) {
+      if (isStart) {
+        callStoragePassword();
+      } else {
+        storeData('stateApp', state);
+        storeData('password', password);
+        setIsStart(true);
+        setPassword('');
+        startBackgroundService();
+        setSmsDisconnect([]);
+        setIsShowModal(false);
+      }
+    } else {
+      alert('Vui lòng nhập mật khẩu');
+    }
+  };
+
   const renderLatestMessages = useCallback(() => {
-    const branchArr = state.branch_name.split(',');
-    const data = state.smsList?.filter(_sms => {
-      return branchArr.find(branch => {
-        return branch.trim() === _sms.address && _sms;
+    const branchArr = state?.branch_name?.split(',');
+    const data = smsList?.filter(_sms => {
+      return branchArr?.find(branch => {
+        return branch?.trim() === _sms?.address && _sms;
       });
     });
     return (
@@ -351,7 +393,7 @@ const Home = () => {
             DANH SÁCH TIN NHẮN
           </Text>
           <Text style={{fontWeight: 'bold', color: '#00000', fontSize: 16}}>
-            {data.length || state.count}
+            {data?.length || smsCount}
           </Text>
         </View>
         <ScrollView>
@@ -374,7 +416,7 @@ const Home = () => {
         </ScrollView>
       </View>
     );
-  }, [state.branch_name, state.count, state.smsList]);
+  }, [smsCount, smsList, state?.branch_name]);
 
   const renderSetting = () => {
     return (
@@ -414,20 +456,67 @@ const Home = () => {
             placeholder="Nhập branch name"
           />
         </View>
-        {/* <View style={styles.inputContainer}>
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            value={password}
-            onChangeText={value => setPassword(value)}
-            placeholder="Nhập branch name"
-          />
-        </View> */}
-        <TouchableOpacity style={styles.btnContainer} onPress={onChangeStart}>
-          <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
-            {state.isStart ? 'Dừng' : 'Bắt đầu'}
-          </Text>
-        </TouchableOpacity>
+
+        {isStart ? (
+          <TouchableOpacity style={styles.btnContainer} onPress={handleStop}>
+            <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
+              Dừng lại
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.btnContainer} onPress={onChangeStart}>
+            <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
+              Bắt đầu
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  const renderModal = () => {
+    return (
+      <View style={styles.centeredView}>
+        <View style={styles.modalView}>
+          <Text style={styles.modalText}>Nhập mật khẩu</Text>
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Mật khẩu</Text>
+            <TextInput
+              style={styles.input}
+              value={password}
+              onChangeText={value => {
+                setPassword(value);
+              }}
+              placeholder="Nhập mật khẩu"
+            />
+          </View>
+          <View
+            style={{
+              width: '100%',
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+            }}>
+            <TouchableOpacity
+              style={[
+                styles.btnContainer,
+                {width: '45%', backgroundColor: '#888888'},
+              ]}
+              onPress={() => {
+                setIsShowModal(false);
+              }}>
+              <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
+                Huỷ bỏ
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.btnContainer, {width: '45%'}]}
+              onPress={handleConfirm}>
+              <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
+                Xác nhận
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     );
   };
@@ -444,8 +533,25 @@ const Home = () => {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#6a51ae" />
+      <View
+        style={{
+          paddingHorizontal: 60,
+          justifyContent: 'center',
+          paddingTop: 16,
+        }}>
+        <Text
+          style={[
+            styles.modalText,
+            {fontSize: 20, textAlign: 'center', textTransform: 'uppercase'},
+          ]}>
+          Phần mềm cập nhật số dư Ngân Hàng
+        </Text>
+      </View>
       {renderSetting()}
       {renderLatestMessages()}
+      <Modal animationType="slide" transparent={true} visible={isShowModal}>
+        {renderModal()}
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -453,6 +559,29 @@ const Home = () => {
 export default React.memo(Home);
 
 const styles = StyleSheet.create({
+  centeredView: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 22,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  modalView: {
+    width: Dimensions.get('window').width * 0.9,
+    height: Dimensions.get('window').height * 0.3,
+    padding: 20,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
   settingContainer: {
     padding: 16,
     width: '100%',
@@ -484,6 +613,7 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   btnContainer: {
+    borderRadius: 8,
     marginTop: 16,
     backgroundColor: 'red',
     height: 48,
@@ -498,5 +628,10 @@ const styles = StyleSheet.create({
   text: {
     color: '#000000',
     fontSize: 15,
+  },
+  modalText: {
+    color: '#000000',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
