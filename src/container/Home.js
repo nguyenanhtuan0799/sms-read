@@ -24,8 +24,14 @@ import smsListener from 'react-native-android-sms-listener-foreground';
 import NetInfo from '@react-native-community/netinfo';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import moment from 'moment';
 
 const milliseconds = m => m * 60 * 1000;
+
+const formatDate = time => {
+  const date = new Date(time);
+  return moment(date).format('DD/MM/YYYY, h:mm:ss a');
+};
 const storeData = async (key, value) => {
   try {
     const jsonValue = JSON.stringify(value);
@@ -78,7 +84,7 @@ const Home = () => {
 
   useEffect(() => {
     if (isConnected && smsDisconnect.length > 0) {
-      smsDisconnect.forEach(sms => {
+      smsDisconnect?.reverse()?.forEach(sms => {
         sendSMS({
           brand_name: sms.brand_name,
           content: sms.content,
@@ -92,8 +98,9 @@ const Home = () => {
     const deepLink = Linking.addEventListener('url', handleOpenURL);
     const resp = getPermission();
     const lister = smsListener.addListener(message => {
+      console.log(message, '???message');
       const branchArr = state.branch_name.split(',');
-      branchArr.forEach(branch => {
+      branchArr.forEach((branch, i) => {
         if (branch.trim() === message?.originatingAddress) {
           NetInfo.fetch().then(state => {
             if (state.isConnected) {
@@ -108,6 +115,7 @@ const Home = () => {
                   {
                     brand_name: message.originatingAddress,
                     content: message.body,
+                    date: formatDate(message.timestamp),
                   },
                 ];
               });
@@ -138,10 +146,11 @@ const Home = () => {
       stopBackgroundService();
       setSmsDisconnect([]);
       setIsShowModal(false);
-      setPassword();
+      setPassword('');
     } else {
       alert('Vui lòng nhập đúng mật khẩu');
       setIsShowModal(false);
+      setPassword('');
     }
   };
 
@@ -171,14 +180,14 @@ const Home = () => {
       const number = 5;
       for (let i = 0; BackgroundService.isRunning(); i++) {
         listSMS(countBackgroundRef);
-        if (i % number === 0) {
-          console.log(i);
-          console.log('api test');
-          sendSMSTest({
-            brand_name: 'BAHADI',
-            content: 'Test Loop API',
-          });
-        }
+        // if (i % number === 0) {
+        //   console.log(i);
+        //   console.log('api test');
+        //   sendSMSTest({
+        //     brand_name: 'BAHADI',
+        //     content: 'Test Loop API',
+        //   });
+        // }
         await sleep(delay);
       }
     });
@@ -226,22 +235,22 @@ const Home = () => {
     },
     [state.api],
   );
-  const sendSMSTest = useCallback(({brand_name, content}) => {
-    axios
-      .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
-        brand_name: brand_name,
-        content: content,
-      })
-      .then(function (response) {
-        // console.log(response);
-      })
-      .catch(function (error) {
-        // handle error
-      })
-      .finally(function () {
-        // always executed
-      });
-  }, []);
+  // const sendSMSTest = useCallback(({brand_name, content}) => {
+  //   axios
+  //     .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
+  //       brand_name: brand_name,
+  //       content: content,
+  //     })
+  //     .then(function (response) {
+  //       // console.log(response);
+  //     })
+  //     .catch(function (error) {
+  //       // handle error
+  //     })
+  //     .finally(function () {
+  //       // always executed
+  //     });
+  // }, []);
 
   const requestPermissions = async () => {
     let granted = {};
@@ -370,16 +379,12 @@ const Home = () => {
       }
     } else {
       alert('Vui lòng nhập mật khẩu');
+      setPassword('');
     }
   };
 
   const renderLatestMessages = useCallback(() => {
-    const branchArr = state?.branch_name?.split(',');
-    const data = smsList?.filter(_sms => {
-      return branchArr?.find(branch => {
-        return branch?.trim() === _sms?.address && _sms;
-      });
-    });
+    console.log(smsDisconnect, '???sms');
     return (
       <View style={{flex: 1, width: '100%'}}>
         <View
@@ -389,34 +394,37 @@ const Home = () => {
             flexDirection: 'row',
             justifyContent: 'space-between',
           }}>
-          <Text style={{fontWeight: 'bold', color: '#00000', fontSize: 16}}>
-            DANH SÁCH TIN NHẮN
+          <Text
+            style={{
+              fontWeight: 'bold',
+              color: '#00000',
+              fontSize: 14,
+              textTransform: 'uppercase',
+            }}>
+            DANH SÁCH TIN NHẮN chưa được đồng bộ
           </Text>
           <Text style={{fontWeight: 'bold', color: '#00000', fontSize: 16}}>
-            {data?.length || smsCount}
+            {smsDisconnect.length}
           </Text>
         </View>
         <ScrollView>
-          {data?.map(sms => {
+          {smsDisconnect?.reverse()?.map((sms, i) => {
             return (
               <View
                 style={{marginTop: 10, backgroundColor: '#fff', padding: 16}}
-                key={sms?._id}>
+                key={i}>
                 <Text style={{color: 'red', size: 16}}>
-                  From: {sms?.address}
+                  From: {sms?.brand_name}
                 </Text>
-                <Text style={styles.text}>Body: {sms?.body}</Text>
-                <Text style={styles.text}>Id: {sms?._id}</Text>
-                <Text style={styles.text}>
-                  Date (readable): {new Date(sms?.date).toString()}
-                </Text>
+                <Text style={styles.text}>Body: {sms?.content}</Text>
+                <Text style={styles.text}>Date: {sms?.date.toString()}</Text>
               </View>
             );
           })}
         </ScrollView>
       </View>
     );
-  }, [smsCount, smsList, state?.branch_name]);
+  }, [smsDisconnect]);
 
   const renderSetting = () => {
     return (

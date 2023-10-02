@@ -31,6 +31,7 @@
     "@voximplant/react-native-foreground-service": "^3.0.2",
     "axios": "^1.2.0",
     "git": "^0.1.5",
+    "moment": "^2.29.4",
     "react": "18.1.0",
     "react-native": "0.70.6",
     "react-native-android-sms-listener-foreground": "^0.9.0",
