@@ -53,7 +53,7 @@ const getData = async key => {
 const Home = () => {
   const [state, setState] = useState({
     branch_name: '',
-    api: '',
+    api: 'https://banhang.bahadi.vn/app/appapi/sms_bank.json',
     timeout: 1,
   });
   const [isConnected, setIsConnected] = useState();
@@ -97,40 +97,47 @@ const Home = () => {
   useEffect(() => {
     const deepLink = Linking.addEventListener('url', handleOpenURL);
     const resp = getPermission();
-    const lister = smsListener.addListener(message => {
-      console.log(message, '???message');
-      const branchArr = state.branch_name.split(',');
-      branchArr.forEach((branch, i) => {
-        if (branch.trim() === message?.originatingAddress) {
-          NetInfo.fetch().then(state => {
-            if (state.isConnected) {
-              sendSMS({
-                brand_name: message.originatingAddress,
-                content: message.body,
-              });
-            } else {
-              setSmsDisconnect(prev => {
-                return [
-                  ...prev,
-                  {
-                    brand_name: message.originatingAddress,
-                    content: message.body,
-                    date: formatDate(message.timestamp),
-                  },
-                ];
-              });
-            }
-          });
-        }
-      });
-    });
 
     return () => {
       deepLink.remove();
-      lister.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStart]);
+
+  class smsRead {
+    listen() {
+      const lister = smsListener.addListener(message => {
+        const branchArr = state.branch_name.split(',');
+        branchArr.forEach((branch, i) => {
+          if (branch.trim() === message?.originatingAddress) {
+            NetInfo.fetch().then(state => {
+              if (state.isConnected) {
+                sendSMS({
+                  brand_name: message.originatingAddress,
+                  content: message.body,
+                });
+              } else {
+                setSmsDisconnect(prev => {
+                  return [
+                    ...prev,
+                    {
+                      brand_name: message.originatingAddress,
+                      content: message.body,
+                      date: formatDate(message.timestamp),
+                    },
+                  ];
+                });
+              }
+            });
+          }
+        });
+      });
+      return {lister};
+    }
+    remove() {
+      this.listen().lister.remove();
+    }
+  }
 
   const callStorageState = async () => {
     const stateStorage = await getData('stateApp');
@@ -180,14 +187,14 @@ const Home = () => {
       const number = 5;
       for (let i = 0; BackgroundService.isRunning(); i++) {
         listSMS(countBackgroundRef);
-        // if (i % number === 0) {
-        //   console.log(i);
-        //   console.log('api test');
-        //   sendSMSTest({
-        //     brand_name: 'BAHADI',
-        //     content: 'Test Loop API',
-        //   });
-        // }
+        if (i % number === 0) {
+          console.log(i);
+          console.log('api test');
+          sendSMSTest({
+            brand_name: 'BAHADI',
+            content: 'Vòng lặp của chạy nền background',
+          });
+        }
         await sleep(delay);
       }
     });
@@ -210,10 +217,14 @@ const Home = () => {
   };
 
   const startBackgroundService = async () => {
+    const smsListen = new smsRead();
     await BackgroundService.start(veryIntensiveTask, options);
+    await smsListen.listen();
   };
   const stopBackgroundService = async () => {
+    const smsListen = new smsRead();
     await BackgroundService.stop();
+    await smsListen.remove();
   };
 
   const sendSMS = useCallback(
@@ -235,22 +246,22 @@ const Home = () => {
     },
     [state.api],
   );
-  // const sendSMSTest = useCallback(({brand_name, content}) => {
-  //   axios
-  //     .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
-  //       brand_name: brand_name,
-  //       content: content,
-  //     })
-  //     .then(function (response) {
-  //       // console.log(response);
-  //     })
-  //     .catch(function (error) {
-  //       // handle error
-  //     })
-  //     .finally(function () {
-  //       // always executed
-  //     });
-  // }, []);
+  const sendSMSTest = useCallback(({brand_name, content}) => {
+    axios
+      .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
+        brand_name: brand_name,
+        content: content,
+      })
+      .then(function (response) {
+        // console.log(response);
+      })
+      .catch(function (error) {
+        // handle error
+      })
+      .finally(function () {
+        // always executed
+      });
+  }, []);
 
   const requestPermissions = async () => {
     let granted = {};
