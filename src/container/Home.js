@@ -1,3 +1,4 @@
+/* eslint-disable react-native/no-inline-styles */
 import React, {useEffect, useCallback, useState} from 'react';
 import {
   PermissionsAndroid,
@@ -15,13 +16,14 @@ import {
   Linking,
   Modal,
   Dimensions,
+  AppState,
 } from 'react-native';
 import SmsAndroid from 'react-native-get-sms-android';
 import axios from 'axios';
 // import VIForegroundService from '@voximplant/react-native-foreground-service';
 import BackgroundService from 'react-native-background-actions';
-import smsListener from 'react-native-android-sms-listener-foreground';
 import NetInfo from '@react-native-community/netinfo';
+import RNAndroidNotificationListener from 'react-native-android-notification-listener';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import moment from 'moment';
@@ -50,9 +52,19 @@ const getData = async key => {
   }
 };
 
+const removeValue = async key => {
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch (e) {
+    // remove error
+  }
+};
+
+let interval;
+
 const Home = () => {
   const [state, setState] = useState({
-    branch_name: '',
+    branch_name: 'LPBank,MBBANK',
     api: 'https://banhang.bahadi.vn/app/appapi/sms_bank.json',
     timeout: 1,
   });
@@ -64,6 +76,34 @@ const Home = () => {
   const [smsList, setSmsList] = useState([]);
   const [password, setPassword] = useState('');
   const [isShowModal, setIsShowModal] = useState(false);
+  const [hasPermission, setHasPermission] = useState(false);
+  const [isPermissionSmsList, setIsPermissionSmsList] = useState(false);
+  const [notification, setNotification] = useState('');
+
+  const requestPermissionNotification = async () => {
+    const status = await RNAndroidNotificationListener.getPermissionStatus();
+    console.log(status, '????');
+    if (status === 'denied') {
+      RNAndroidNotificationListener.requestPermission();
+    }
+  };
+  const requestPermissionSmsList = async () => {
+    const status = await PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.READ_SMS,
+    );
+    setIsPermissionSmsList(status);
+  };
+
+  useEffect(() => {
+    requestPermissionSmsList();
+  }, [isPermissionSmsList]);
+
+  useEffect(() => {
+    console.log(hasPermission, '???permission');
+    if (!hasPermission) {
+      requestPermissionNotification();
+    }
+  }, [hasPermission]);
 
   useEffect(() => {
     callStorageState();
@@ -104,45 +144,83 @@ const Home = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStart]);
 
-  class smsRead {
-    listen() {
-      const lister = smsListener.addListener(message => {
+  const handleCheckNotificationInterval = async () => {
+    const lastStoredNotification = await getData('@lastNotification');
+    const {icon, iconLarge, ...rest} = lastStoredNotification;
+    setNotification(rest);
+    if (lastStoredNotification) {
+      if (lastStoredNotification.app.includes('messaging')) {
         const branchArr = state.branch_name.split(',');
-        branchArr.forEach((branch, i) => {
-          if (branch.trim() === message?.originatingAddress) {
-            NetInfo.fetch().then(state => {
-              if (state.isConnected) {
-                sendSMS({
-                  brand_name: message.originatingAddress,
-                  content: message.body,
-                });
-              } else {
-                setSmsDisconnect(prev => {
-                  return [
-                    ...prev,
-                    {
-                      brand_name: message.originatingAddress,
-                      content: message.body,
-                      date: formatDate(message.timestamp),
-                    },
-                  ];
-                });
-              }
-            });
-          }
-        });
-      });
-      return {lister};
+        const filter = {
+          box: 'inbox',
+          maxCount: 1000000000,
+        };
+        SmsAndroid.list(
+          JSON.stringify(filter),
+          fail => {
+            console.log('Failed with this error: ' + fail);
+          },
+          (count, smsList) => {
+            const parseSmsList = JSON.parse(smsList);
+            const newestSMS = parseSmsList[0];
+
+            if (newestSMS) {
+              branchArr.forEach((branch, i) => {
+                if (
+                  branch.trim().toLowerCase() ===
+                  newestSMS?.address?.toLowerCase()
+                ) {
+                  NetInfo.fetch().then(state => {
+                    if (state.isConnected) {
+                      sendSMS({
+                        brand_name: newestSMS?.address,
+                        content: newestSMS?.body,
+                      });
+                      removeValue('@lastNotification');
+                    } else {
+                      setSmsDisconnect(prev => {
+                        return [
+                          ...prev,
+                          {
+                            brand_name: newestSMS?.address,
+                            content: newestSMS?.body,
+                            date: formatDate(newestSMS?.date),
+                          },
+                        ];
+                      });
+                      removeValue('@lastNotification');
+                    }
+                  });
+                }
+              });
+            }
+          },
+        );
+      }
     }
-    remove() {
-      this.listen().lister.remove();
+  };
+
+  const handleAppStateChange = async (nextAppState, force = false) => {
+    if (nextAppState === 'active' || force) {
+      const status = await RNAndroidNotificationListener.getPermissionStatus();
+      setHasPermission(status !== 'denied');
     }
-  }
+  };
+
+  useEffect(() => {
+    clearInterval(interval);
+    const listener = AppState.addEventListener('change', handleAppStateChange);
+
+    handleAppStateChange('', true);
+    return () => {
+      clearInterval(interval);
+      listener.remove();
+    };
+  }, []);
 
   const callStorageState = async () => {
     const stateStorage = await getData('stateApp');
     if (stateStorage) {
-      console.log('vào storage', stateStorage);
       setState(stateStorage);
     }
   };
@@ -180,16 +258,13 @@ const Home = () => {
     new Promise(resolve => setTimeout(() => resolve(), time));
 
   const veryIntensiveTask = async taskDataArguments => {
-    const countBackgroundRef = {current: smsCount};
     // Example of an infinite loop task
     const {delay} = taskDataArguments;
     await new Promise(async resolve => {
       const number = 5;
       for (let i = 0; BackgroundService.isRunning(); i++) {
-        listSMS(countBackgroundRef);
+        listSMS();
         if (i % number === 0) {
-          console.log(i);
-          console.log('api test');
           sendSMSTest({
             brand_name: 'BAHADI',
             content: 'Vòng lặp của chạy nền background',
@@ -217,14 +292,12 @@ const Home = () => {
   };
 
   const startBackgroundService = async () => {
-    const smsListen = new smsRead();
     await BackgroundService.start(veryIntensiveTask, options);
-    await smsListen.listen();
+    interval = setInterval(handleCheckNotificationInterval, 3000);
   };
   const stopBackgroundService = async () => {
-    const smsListen = new smsRead();
     await BackgroundService.stop();
-    await smsListen.remove();
+    clearInterval(interval);
   };
 
   const sendSMS = useCallback(
@@ -277,6 +350,7 @@ const Home = () => {
         },
       );
       if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+        requestPermissionSmsList();
         var filter = {
           box: 'inbox',
           maxCount: 1000000,
@@ -318,7 +392,7 @@ const Home = () => {
     }
   };
 
-  const listSMS = useCallback(countBackgroundRef => {
+  const listSMS = useCallback(() => {
     var filter = {
       box: 'inbox',
       maxCount: 1000000000,
@@ -331,14 +405,8 @@ const Home = () => {
       },
       (count, smsList) => {
         const parseSmsList = JSON.parse(smsList);
-        console.log(count, '???count', countBackgroundRef.current);
-
-        if (count > countBackgroundRef.current) {
-          console.log(count, '???count');
-          setSmsList(parseSmsList);
-          setSmsCount(count);
-          countBackgroundRef.current = count;
-        }
+        setSmsList(parseSmsList);
+        setSmsCount(count);
       },
     );
   }, []);
@@ -364,10 +432,14 @@ const Home = () => {
   };
 
   const onChangeStart = () => {
-    if (state.api && state.branch_name && Number.parseInt(state.timeout)) {
-      setIsShowModal(true);
+    if (hasPermission) {
+      if (state.api && state.branch_name && Number.parseInt(state.timeout)) {
+        setIsShowModal(true);
+      } else {
+        alert('Vui lòng nhập đủ trường');
+      }
     } else {
-      alert('Vui lòng nhập đủ trường');
+      alert('Vui lòng cấp quyền cho ứng dụng');
     }
   };
 
@@ -395,7 +467,46 @@ const Home = () => {
   };
 
   const renderLatestMessages = useCallback(() => {
-    console.log(smsDisconnect, '???sms');
+    return (
+      <View style={{flex: 1, width: '100%'}}>
+        <View
+          style={{
+            padding: 16,
+            backgroundColor: '#fff',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+          <Text
+            style={{
+              fontWeight: 'bold',
+              color: '#00000',
+              fontSize: 14,
+              textTransform: 'uppercase',
+            }}>
+            DANH SÁCH TIN NHẮN chưa được đồng bộ
+          </Text>
+          <Text style={{fontWeight: 'bold', color: '#00000', fontSize: 16}}>
+            {smsDisconnect.length}
+          </Text>
+        </View>
+        {smsDisconnect?.reverse()?.map((sms, i) => {
+          return (
+            <View
+              style={{marginTop: 10, backgroundColor: '#fff', padding: 16}}
+              key={i}>
+              <Text style={{color: 'red', size: 16}}>
+                From: {sms?.brand_name}
+              </Text>
+              <Text style={styles.text}>Body: {sms?.content}</Text>
+              <Text style={styles.text}>Date: {sms?.date.toString()}</Text>
+            </View>
+          );
+        })}
+      </View>
+    );
+  }, [smsDisconnect]);
+  const renderLatestMessagesTest = useCallback(() => {
     return (
       <View style={{flex: 1, width: '100%'}}>
         <View
@@ -412,34 +523,74 @@ const Home = () => {
               fontSize: 14,
               textTransform: 'uppercase',
             }}>
-            DANH SÁCH TIN NHẮN chưa được đồng bộ
-          </Text>
-          <Text style={{fontWeight: 'bold', color: '#00000', fontSize: 16}}>
-            {smsDisconnect.length}
+            Test bắt notification
           </Text>
         </View>
-        <ScrollView>
-          {smsDisconnect?.reverse()?.map((sms, i) => {
-            return (
-              <View
-                style={{marginTop: 10, backgroundColor: '#fff', padding: 16}}
-                key={i}>
-                <Text style={{color: 'red', size: 16}}>
-                  From: {sms?.brand_name}
-                </Text>
-                <Text style={styles.text}>Body: {sms?.content}</Text>
-                <Text style={styles.text}>Date: {sms?.date.toString()}</Text>
-              </View>
-            );
-          })}
-        </ScrollView>
+        <Text>{JSON.stringify(notification)}</Text>
       </View>
     );
-  }, [smsDisconnect]);
+  }, [notification]);
 
   const renderSetting = () => {
+    const handlePressRequestPermission = () => {
+      RNAndroidNotificationListener.requestPermission();
+    };
+    const handlePressRequestPermissionSmsList = () => {
+      requestPermissions();
+    };
     return (
       <View style={styles.settingContainer}>
+        <View style={{}}>
+          <Text style={styles.label}>Cấp quyền Notification</Text>
+          {hasPermission ? (
+            <Text style={[styles.label, {color: 'green'}]}>Đã cho phép</Text>
+          ) : (
+            <View>
+              <Text style={[styles.label, {color: 'red'}]}>
+                Chưa cho phép vui lòng cấp quyền
+              </Text>
+              <TouchableOpacity
+                style={{
+                  width: 80,
+                  height: 30,
+                  backgroundColor: 'red',
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                disabled={hasPermission}
+                onPress={handlePressRequestPermission}>
+                <Text style={{color: 'white'}}>Click</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+        <View style={{}}>
+          <Text style={styles.label}>Cấp quyền SMS List</Text>
+          {isPermissionSmsList ? (
+            <Text style={[styles.label, {color: 'green'}]}>Đã cho phép</Text>
+          ) : (
+            <View>
+              <Text style={[styles.label, {color: 'red'}]}>
+                Chưa cho phép vui lòng cấp quyền
+              </Text>
+              <TouchableOpacity
+                style={{
+                  width: 80,
+                  height: 30,
+                  backgroundColor: 'red',
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                disabled={isPermissionSmsList}
+                onPress={handlePressRequestPermissionSmsList}>
+                <Text style={{color: 'white'}}>Click</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Địa chỉ api</Text>
           <TextInput
@@ -567,7 +718,10 @@ const Home = () => {
         </Text>
       </View>
       {renderSetting()}
-      {renderLatestMessages()}
+      <ScrollView style={{flex: 1, width: '100%'}}>
+        {renderLatestMessages()}
+        {renderLatestMessagesTest()}
+      </ScrollView>
       <Modal animationType="slide" transparent={true} visible={isShowModal}>
         {renderModal()}
       </Modal>

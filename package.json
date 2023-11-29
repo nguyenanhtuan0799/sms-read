@@ -34,6 +34,7 @@
     "moment": "^2.29.4",
     "react": "18.1.0",
     "react-native": "0.70.6",
+    "react-native-android-notification-listener": "^5.0.1",
     "react-native-android-sms-listener-foreground": "^0.9.0",
     "react-native-background-actions": "^3.0.0",
     "react-native-background-fetch": "^4.2.1",
