@@ -27,6 +27,7 @@ import RNAndroidNotificationListener from 'react-native-android-notification-lis
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import moment from 'moment';
+import notifee from '@notifee/react-native';
 
 const milliseconds = m => m * 60 * 1000;
 
@@ -82,16 +83,36 @@ const Home = () => {
 
   const requestPermissionNotification = async () => {
     const status = await RNAndroidNotificationListener.getPermissionStatus();
-    console.log(status, '????');
     if (status === 'denied') {
       RNAndroidNotificationListener.requestPermission();
     }
   };
+
   const requestPermissionSmsList = async () => {
     const status = await PermissionsAndroid.check(
       PermissionsAndroid.PERMISSIONS.READ_SMS,
     );
     setIsPermissionSmsList(status);
+  };
+
+  const onDisplayNotification = async key => {
+    await notifee.requestPermission();
+    const channelId = await notifee.createChannel({
+      id: `sms_bank${key}`,
+      name: `Sms Bank Channel${key}`,
+    });
+    await notifee.displayNotification({
+      title: `Notification Title${key}`,
+      body: `Main body content of the notification${key}`,
+      android: {
+        channelId,
+        smallIcon: '@mipmap/app_logo',
+        // pressAction is needed if you want the notification to open the app when pressed
+        pressAction: {
+          id: 'sms_bank',
+        },
+      },
+    });
   };
 
   useEffect(() => {
@@ -261,15 +282,23 @@ const Home = () => {
     // Example of an infinite loop task
     const {delay} = taskDataArguments;
     await new Promise(async resolve => {
-      const number = 5;
+      let remind = true;
+      let hourRemind = [8, 13, 16];
       for (let i = 0; BackgroundService.isRunning(); i++) {
-        listSMS();
-        if (i % number === 0) {
-          sendSMSTest({
-            brand_name: 'BAHADI',
-            content: 'Vòng lặp của chạy nền background',
-          });
+        const hour = moment(new Date()).hour();
+
+        if (hourRemind.includes(hour)) {
+          if (remind) {
+            console.log('vao jo');
+            onDisplayNotification(hour);
+            remind = false;
+          }
+        } else {
+          console.log('vao jo ko');
+          remind = true;
         }
+        listSMS();
+        // onDisplayNotification(i);
         await sleep(delay);
       }
     });
@@ -538,6 +567,7 @@ const Home = () => {
     const handlePressRequestPermissionSmsList = () => {
       requestPermissions();
     };
+
     return (
       <View style={styles.settingContainer}>
         <View style={{}}>
