@@ -27,7 +27,8 @@ import RNAndroidNotificationListener from 'react-native-android-notification-lis
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import moment from 'moment';
-import notifee from '@notifee/react-native';
+import notifee, {EventType} from '@notifee/react-native';
+import {isPastDate} from '../util/common';
 
 const milliseconds = m => m * 60 * 1000;
 
@@ -79,7 +80,6 @@ const Home = () => {
   const [isShowModal, setIsShowModal] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
   const [isPermissionSmsList, setIsPermissionSmsList] = useState(false);
-  const [notification, setNotification] = useState('');
 
   const requestPermissionNotification = async () => {
     const status = await RNAndroidNotificationListener.getPermissionStatus();
@@ -95,21 +95,23 @@ const Home = () => {
     setIsPermissionSmsList(status);
   };
 
-  const onDisplayNotification = async key => {
-    await notifee.requestPermission();
+  const onReceivedMessage = async key => {
+    // Create a channel (required for Android)
     const channelId = await notifee.createChannel({
-      id: `sms_bank${key}`,
-      name: `Sms Bank Channel${key}`,
+      id: `smsBank${key}`,
+      name: 'smsBank Channel',
     });
+
+    // Display a notification
     await notifee.displayNotification({
-      title: `Notification Title${key}`,
-      body: `Main body content of the notification${key}`,
+      title: 'Thông báo app SmsRead đã bị mất quyền',
+      body: 'Vui lòng vào app để cấp quyền lại cho ứng dụng',
       android: {
         channelId,
-        smallIcon: '@mipmap/app_logo',
+        smallIcon: '@mipmap/app_logo', // optional, defaults to 'ic_launcher'.
         // pressAction is needed if you want the notification to open the app when pressed
         pressAction: {
-          id: 'sms_bank',
+          id: `smsBank${key}`,
         },
       },
     });
@@ -120,7 +122,6 @@ const Home = () => {
   }, [isPermissionSmsList]);
 
   useEffect(() => {
-    console.log(hasPermission, '???permission');
     if (!hasPermission) {
       requestPermissionNotification();
     }
@@ -141,6 +142,19 @@ const Home = () => {
       unsubscribe.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    return notifee.onForegroundEvent(({type, detail}) => {
+      switch (type) {
+        case EventType.DISMISSED:
+          console.log('User dismissed notification', detail.notification);
+          break;
+        case EventType.PRESS:
+          console.log('User pressed notification', detail.notification);
+          Linking.openURL('smsBanking://Root');
+          break;
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -167,10 +181,8 @@ const Home = () => {
 
   const handleCheckNotificationInterval = async () => {
     const lastStoredNotification = await getData('@lastNotification');
-    const {icon, iconLarge, ...rest} = lastStoredNotification;
-    setNotification(rest);
     if (lastStoredNotification) {
-      if (lastStoredNotification.app.includes('messaging')) {
+      if (lastStoredNotification?.app?.includes('messaging')) {
         const branchArr = state.branch_name.split(',');
         const filter = {
           box: 'inbox',
@@ -188,11 +200,11 @@ const Home = () => {
             if (newestSMS) {
               branchArr.forEach((branch, i) => {
                 if (
-                  branch.trim().toLowerCase() ===
+                  branch?.trim()?.toLowerCase() ===
                   newestSMS?.address?.toLowerCase()
                 ) {
                   NetInfo.fetch().then(state => {
-                    if (state.isConnected) {
+                    if (state?.isConnected) {
                       sendSMS({
                         brand_name: newestSMS?.address,
                         content: newestSMS?.body,
@@ -282,22 +294,17 @@ const Home = () => {
     // Example of an infinite loop task
     const {delay} = taskDataArguments;
     await new Promise(async resolve => {
-      let remind = true;
-      let hourRemind = [8, 13, 16];
       for (let i = 0; BackgroundService.isRunning(); i++) {
-        const hour = moment(new Date()).hour();
-
-        if (hourRemind.includes(hour)) {
-          if (remind) {
-            console.log('vao jo');
-            onDisplayNotification(hour);
-            remind = false;
-          }
-        } else {
-          console.log('vao jo ko');
-          remind = true;
-        }
         listSMS();
+        const statusNotification =
+          await RNAndroidNotificationListener.getPermissionStatus();
+        const statusSmsList = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.READ_SMS,
+        );
+        if (statusNotification === 'denied' || !statusSmsList) {
+          onReceivedMessage(i);
+        }
+        handleCheckNotificationInterval();
         // onDisplayNotification(i);
         await sleep(delay);
       }
@@ -316,17 +323,17 @@ const Home = () => {
     color: '#ff00ff',
     linkingURI: 'smsBanking://Root', // See Deep Linking for more info
     parameters: {
-      delay: milliseconds(Number.parseInt(state.timeout)),
+      delay: 3000,
     },
   };
 
   const startBackgroundService = async () => {
     await BackgroundService.start(veryIntensiveTask, options);
-    interval = setInterval(handleCheckNotificationInterval, 3000);
+    // interval = setInterval(handleCheckNotificationInterval, 3000);
   };
   const stopBackgroundService = async () => {
     await BackgroundService.stop();
-    clearInterval(interval);
+    // clearInterval(interval);
   };
 
   const sendSMS = useCallback(
@@ -338,8 +345,10 @@ const Home = () => {
         })
         .then(function (response) {
           // console.log(response);
+          console.log(response);
         })
         .catch(function (error) {
+          console.log(error);
           // handle error
         })
         .finally(function () {
@@ -348,22 +357,6 @@ const Home = () => {
     },
     [state.api],
   );
-  const sendSMSTest = useCallback(({brand_name, content}) => {
-    axios
-      .post('https://banhang.bahadi.vn/app/appapi/sms_bank.json', {
-        brand_name: brand_name,
-        content: content,
-      })
-      .then(function (response) {
-        // console.log(response);
-      })
-      .catch(function (error) {
-        // handle error
-      })
-      .finally(function () {
-        // always executed
-      });
-  }, []);
 
   const requestPermissions = async () => {
     let granted = {};
@@ -513,7 +506,7 @@ const Home = () => {
               fontSize: 14,
               textTransform: 'uppercase',
             }}>
-            DANH SÁCH TIN NHẮN chưa được đồng bộ
+            Danhs sách tin nhắn chưa được đồng bộ khi không có mạng
           </Text>
           <Text style={{fontWeight: 'bold', color: '#00000', fontSize: 16}}>
             {smsDisconnect.length}
@@ -535,30 +528,6 @@ const Home = () => {
       </View>
     );
   }, [smsDisconnect]);
-  const renderLatestMessagesTest = useCallback(() => {
-    return (
-      <View style={{flex: 1, width: '100%'}}>
-        <View
-          style={{
-            padding: 16,
-            backgroundColor: '#fff',
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-          }}>
-          <Text
-            style={{
-              fontWeight: 'bold',
-              color: '#00000',
-              fontSize: 14,
-              textTransform: 'uppercase',
-            }}>
-            Test bắt notification
-          </Text>
-        </View>
-        <Text>{JSON.stringify(notification)}</Text>
-      </View>
-    );
-  }, [notification]);
 
   const renderSetting = () => {
     const handlePressRequestPermission = () => {
@@ -657,19 +626,35 @@ const Home = () => {
           />
         </View>
 
-        {isStart ? (
-          <TouchableOpacity style={styles.btnContainer} onPress={handleStop}>
+        <View
+          style={{
+            flexDirection: 'row',
+            gap: 16,
+            justifyContent: 'space-between',
+          }}>
+          {isStart ? (
+            <TouchableOpacity style={styles.btnContainer} onPress={handleStop}>
+              <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
+                Dừng lại
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.btnContainer}
+              onPress={onChangeStart}>
+              <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
+                Bắt đầu
+              </Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.btnContainer, {backgroundColor: 'blue'}]}
+            onPress={handleSyncSms}>
             <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
-              Dừng lại
+              Động bộ tất cả tin nhắn
             </Text>
           </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={styles.btnContainer} onPress={onChangeStart}>
-            <Text style={{color: 'white', size: 16, fontWeight: '600'}}>
-              Bắt đầu
-            </Text>
-          </TouchableOpacity>
-        )}
+        </View>
       </View>
     );
   };
@@ -720,6 +705,36 @@ const Home = () => {
       </View>
     );
   };
+  const handleSyncSms = () => {
+    const branchArr = state.branch_name.split(',');
+    const filter = {
+      box: 'inbox',
+      maxCount: 1000000000,
+    };
+    SmsAndroid.list(
+      JSON.stringify(filter),
+      fail => {
+        console.log('Failed with this error: ' + fail);
+      },
+      (count, smsList) => {
+        const parseSmsList = JSON.parse(smsList);
+        parseSmsList.forEach(item => {
+          if (isPastDate(item?.date_sent)) {
+            branchArr.forEach((branch, i) => {
+              if (
+                branch?.trim()?.toLowerCase() === item?.address?.toLowerCase()
+              ) {
+                sendSMS({brand_name: item?.address, content: item?.body});
+                console.log({brand_name: item?.address, content: item?.body});
+              }
+            });
+          } else {
+            return;
+          }
+        });
+      },
+    );
+  };
 
   if (Platform.OS !== 'android') {
     return (
@@ -748,9 +763,9 @@ const Home = () => {
         </Text>
       </View>
       {renderSetting()}
+
       <ScrollView style={{flex: 1, width: '100%'}}>
         {renderLatestMessages()}
-        {renderLatestMessagesTest()}
       </ScrollView>
       <Modal animationType="slide" transparent={true} visible={isShowModal}>
         {renderModal()}
@@ -786,9 +801,11 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   settingContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     width: '100%',
   },
+
   container: {
     flex: 1,
     justifyContent: 'center',
@@ -818,10 +835,11 @@ const styles = StyleSheet.create({
   btnContainer: {
     borderRadius: 8,
     marginTop: 16,
-    backgroundColor: 'red',
+    backgroundColor: '#FF2701',
     height: 48,
     alignItems: 'center',
     justifyContent: 'center',
+    width: '48%',
   },
   label: {
     color: '#000000',

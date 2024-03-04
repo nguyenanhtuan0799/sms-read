@@ -8,8 +8,9 @@ import {name as appName} from './app.json';
 
 import {RNAndroidNotificationListenerHeadlessJsName} from 'react-native-android-notification-listener';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import notifee, {EventType} from '@notifee/react-native';
 
-const headlessNotificationListener = async ({notification}: any) => {
+const headlessNotificationListener = async ({notification}) => {
   /**
    * This notification is a JSON string in the follow format:
    *  {
@@ -44,9 +45,27 @@ const headlessNotificationListener = async ({notification}: any) => {
     }
   }
 };
+notifee.onBackgroundEvent(async ({type, detail}) => {
+  const {notification, pressAction} = detail;
+
+  // Check if the user pressed the "Mark as read" action
+  if (
+    type === EventType.ACTION_PRESS &&
+    !!pressAction &&
+    pressAction.id === 'mark-as-read'
+  ) {
+    // Decrement the count by 1
+    await notifee.decrementBadgeCount();
+    // Remove the notification
+    if (notification && notification.id) {
+      await notifee.cancelNotification(notification.id);
+    }
+  }
+});
 
 AppRegistry.registerHeadlessTask(
   RNAndroidNotificationListenerHeadlessJsName,
   () => headlessNotificationListener,
 );
+
 AppRegistry.registerComponent(appName, () => App);
